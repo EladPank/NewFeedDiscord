@@ -134,24 +134,45 @@ def render_html(grouped):
     return "\n".join(html)
 
 
+MAX_ITEMS_PER_GROUP = 5      # headlines shown per lean group
+MAX_TITLE_CHARS = 100        # truncate very long headlines
+MAX_TOTAL_EMBED_CHARS = 5500 # stay safely under Discord's 6000-char total limit
+
+
 def build_discord_embeds(grouped):
     """
-    Discord webhooks accept up to 10 embeds per message and each embed
-    field value must be <= 1024 chars, so headlines are truncated defensively.
+    Discord webhooks accept up to 10 embeds per message, but ALSO cap the
+    combined size of title+description+fields across every embed in the
+    message at 6000 characters total. We cap items per group and truncate
+    long titles, then trim whole embeds off the end if we're still over
+    the limit (rather than let Discord reject the whole message).
     """
     embeds = []
     for lean, items in grouped.items():
         lines = []
-        for item in items[:10]:  # cap per group so we don't blow the char limit
+        for item in items[:MAX_ITEMS_PER_GROUP]:
             title = item["title"].replace("[", "(").replace("]", ")")
+            if len(title) > MAX_TITLE_CHARS:
+                title = title[:MAX_TITLE_CHARS - 1] + "…"
             lines.append(f"[{title}]({item['link']})  —  *{item['source']}*")
         description = "\n\n".join(lines) if lines else "No stories in this window."
+        if len(items) > MAX_ITEMS_PER_GROUP:
+            description += f"\n\n*+{len(items) - MAX_ITEMS_PER_GROUP} more not shown*"
         embeds.append({
             "title": lean,
-            "description": description[:4000],
+            "description": description[:1800],  # per-embed safety cap too
             "color": LEAN_COLORS.get(lean, DEFAULT_COLOR),
         })
-    return embeds[:10]  # Discord hard limit
+
+    # Trim from the end until the combined size fits Discord's total limit.
+    def total_size(embed_list):
+        return sum(len(e.get("title", "")) + len(e.get("description", "")) for e in embed_list)
+
+    embeds = embeds[:10]  # Discord hard limit on embed count
+    while embeds and total_size(embeds) > MAX_TOTAL_EMBED_CHARS:
+        embeds.pop()  # drop the last (least prioritized) group first
+
+    return embeds
 
 
 def send_discord(grouped):
