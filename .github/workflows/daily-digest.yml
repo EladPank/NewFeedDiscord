@@ -2,14 +2,25 @@ name: Daily News Digest
 
 on:
   schedule:
-    # Runs at 07:00 UTC every day. Adjust for your timezone
-    # (e.g. 05:00 UTC = 07:00 in Israel during standard time).
+    # Runs at 07:00 UTC every day. Adjust for your timezone.
     - cron: "0 7 * * *"
   workflow_dispatch: {}   # lets you trigger it manually from the Actions tab to test
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
-  send-digest:
+  build-and-send:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -22,7 +33,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run digest and post to Discord
+      - name: Build digest page
+        run: python news_digest.py --hours 24
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload page artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Post digest to Discord
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: python news_digest.py --discord --hours 24
